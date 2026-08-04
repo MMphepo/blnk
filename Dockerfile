@@ -19,6 +19,9 @@ COPY --from=build-env /blnk /usr/local/bin/blnk
 
 RUN chmod +x /usr/local/bin/blnk
 
-CMD ["blnk", "start"]
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
 
 EXPOSE 8080
