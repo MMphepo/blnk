@@ -2,7 +2,7 @@
 
 echo "Running Blnk database migrations..."
 
-blnk migrate
+blnk migrate up
 
 echo "Starting Blnk server..."
 
