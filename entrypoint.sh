@@ -1,4 +1,3 @@
-```sh
 #!/bin/sh
 
 set -e
@@ -12,4 +11,3 @@ echo "Blnk migrations completed successfully."
 echo "Starting Blnk..."
 
 exec blnk start
-```
