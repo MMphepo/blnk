@@ -17,60 +17,123 @@ services:
   init:
     image: alpine:3.19
     container_name: blnk-init
-    working_dir: /workspace
-    volumes:
-      - .:/workspace
-      - blnk_config:/config
-    entrypoint: ["/bin/sh", "/workspace/blnk-init.sh"]
-    environment:
-      BLNK_CONFIG_DIR: /config
     restart: "no"
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-blnk}
+
+    volumes:
+      - blnk_config:/workspace
+
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+
+        CONFIG_FILE="/workspace/blnk.json"
+
+        if [ -f "$${CONFIG_FILE}" ]; then
+          echo "Blnk configuration already exists."
+          exit 0
+        fi
+
+        if [ -d "$${CONFIG_FILE}" ]; then
+          echo "Removing invalid blnk.json directory..."
+          rm -rf "$${CONFIG_FILE}"
+        fi
+
+        cat > "$${CONFIG_FILE}" <<EOF
+        {
+          "project_name": "Blnk",
+          "data_source": {
+            "dns": "postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@postgres:5432/$${POSTGRES_DB}?sslmode=disable"
+          },
+          "redis": {
+            "dns": "redis:6379"
+          },
+          "server": {
+            "port": "5001"
+          }
+        }
+        EOF
+
+        echo "Created $${CONFIG_FILE}"
+        echo "Configuration:"
+        cat "$${CONFIG_FILE}"
 
   server:
     image: ${BLNK_IMAGE:-jerryenebeli/blnk:0.15.0}
     container_name: blnk-server
     restart: on-failure
-    entrypoint: ["/bin/sh", "-c"]
+
+    working_dir: /workspace
+
+    entrypoint:
+      - /bin/sh
+      - -c
+
     command:
-      - "blnk migrate up && blnk start"
+      - |
+        blnk migrate up
+        blnk start
+
     environment:
       TZ: ${TZ:-Etc/UTC}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+
     ports:
       - "5001:5001"
+
     depends_on:
       init:
         condition: service_completed_successfully
-      redis:
-        condition: service_started
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
       jaeger:
         condition: service_started
+
     volumes:
-      - blnk_config:/config
+      - blnk_config:/workspace
 
   worker:
     image: ${BLNK_IMAGE:-jerryenebeli/blnk:0.15.0}
     container_name: blnk-worker
     restart: on-failure
-    entrypoint: ["blnk", "workers"]
+
+    working_dir: /workspace
+
+    entrypoint:
+      - /bin/sh
+      - -c
+
+    command:
+      - |
+        blnk workers
+
     environment:
       TZ: ${TZ:-Etc/UTC}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+
     ports:
       - "5004:5004"
+
     depends_on:
       init:
         condition: service_completed_successfully
-      redis:
-        condition: service_started
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
       jaeger:
         condition: service_started
+
     volumes:
-      - blnk_config:/config
+      - blnk_config:/workspace
 
   redis:
     image: redis:7.2.4
@@ -81,46 +144,57 @@ services:
     image: ${POSTGRES_IMAGE:-postgres:16}
     container_name: ${POSTGRES_CONTAINER:-blnk-postgres}
     restart: on-failure
+
     ports:
       - "${POSTGRES_OUTER_PORT:-5432}:5432"
+
     environment:
       TZ: ${TZ:-Etc/UTC}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: ${POSTGRES_DB:-blnk}
+
     volumes:
       - pg_data:/var/lib/postgresql/data
+
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-blnk}"
-        ]
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   typesense:
     image: typesense/typesense:29.0
     container_name: blnk-typesense
+
     command:
-      [
-        "--data-dir",
-        "/data",
-        "--api-key=blnk-api-key",
-        "--listen-port",
-        "8108"
-      ]
+      - --data-dir
+      - /data
+      - --api-key=blnk-api-key
+      - --listen-port
+      - "8108"
+
     environment:
       TYPESENSE_MEMORY_USED_MAX_PERCENTAGE: "${TYPESENSE_MEMORY_USED_MAX_PERCENTAGE:-85}"
+
     ports:
       - "8108:8108"
+
     volumes:
       - typesense_data:/data
+
     logging:
       driver: "none"
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8108/health"]
+      test:
+        - CMD
+        - curl
+        - -f
+        - http://localhost:8108/health
       interval: 30s
       timeout: 10s
       retries: 5
@@ -128,15 +202,21 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:latest
     container_name: blnk-jaeger
+
     ports:
       - "16686:16686"
       - "4317:4317"
       - "4318:4318"
+
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
+
     healthcheck:
       test:
-        ["CMD", "wget", "--spider", "http://localhost:16686"]
+        - CMD
+        - wget
+        - --spider
+        - http://localhost:16686
       interval: 10s
       timeout: 5s
       retries: 3
@@ -144,17 +224,21 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: blnk-prometheus
+
     profiles:
       - monitoring
+
     ports:
       - "9090:9090"
+
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
     depends_on:
       - server
       - worker
 
 volumes:
+  blnk_config:
   pg_data:
   typesense_data:
-  blnk_config:
